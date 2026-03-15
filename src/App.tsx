@@ -247,7 +247,46 @@ export default function App() {
     { id: "4", label: "Kelas", value: "" },
   ]);
 
-  const paperRef = useRef<HTMLDivElement>(null);
+  const lineCount = Math.floor((PAPER_HEIGHT - marginTop - marginBottom) / lineHeight);
+
+  const contentRef = useRef<HTMLDivElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
+  // Measure wrapper for mobile responsive scale
+  useEffect(() => {
+    const observer = new ResizeObserver((entries) => {
+      if (entries[0]) {
+        setContainerWidth(entries[0].contentRect.width);
+      }
+    });
+    if (wrapperRef.current) {
+      observer.observe(wrapperRef.current);
+    }
+    return () => observer.disconnect();
+  }, []);
+
+  // Measure content height to calculate pagination
+  useEffect(() => {
+    const checkHeight = () => {
+      if (contentRef.current) {
+        const height = contentRef.current.scrollHeight;
+        const pageHeight = lineCount * lineHeight;
+        const calculatedPages = Math.max(1, Math.ceil(height / pageHeight));
+        if (calculatedPages !== totalPages) {
+          setTotalPages(calculatedPages);
+        }
+      }
+    };
+    checkHeight();
+    
+    const observer = new ResizeObserver(checkHeight);
+    if (contentRef.current) {
+      observer.observe(contentRef.current);
+    }
+    return () => observer.disconnect();
+  }, [text, fontSize, lineHeight, fontFamily, totalPages, lineCount]);
 
   useEffect(() => {
     if (isFullscreen) {
@@ -301,69 +340,72 @@ export default function App() {
   };
 
   const handleDownload = async () => {
-    if (!paperRef.current) return;
+    if (totalPages === 0) return;
     setIsGenerating(true);
 
     try {
       await document.fonts.ready;
-      // Beri sedikit jeda agar semua font dimuat sepenuhnya
       await new Promise((resolve) => setTimeout(resolve, 800));
 
-      // Import library html-to-image secara dinamis
       const { toPng } = await import("html-to-image");
 
-      const originalElement = paperRef.current;
-      const clone = originalElement.cloneNode(true) as HTMLDivElement;
+      for (let i = 0; i < totalPages; i++) {
+        const pageId = `paper-page-${i}`;
+        const originalElement = document.getElementById(pageId);
+        if (!originalElement) continue;
 
-      // Sembunyikan dari layar
-      clone.style.position = "fixed";
-      clone.style.top = "-9999px";
-      clone.style.left = "-9999px";
-      clone.style.width = `${PAPER_WIDTH}px`;
-      clone.style.height = `${PAPER_HEIGHT}px`;
+        const clone = originalElement.cloneNode(true) as HTMLDivElement;
 
-      document.body.appendChild(clone);
+        clone.style.position = "fixed";
+        clone.style.top = "-9999px";
+        clone.style.left = "-9999px";
+        clone.style.width = `${PAPER_WIDTH}px`;
+        clone.style.height = `${PAPER_HEIGHT}px`;
+        clone.style.transform = "none";
 
-      // Render ulang elemen matematika (jika ada) di dalam clone
-      const mathElements = clone.querySelectorAll("[data-latex]");
-      mathElements.forEach((el) => {
-        const span = el as HTMLSpanElement;
-        const latex = span.dataset.latex;
-        if (window.katex && latex) {
-          try {
-            window.katex.render(latex, span, {
-              throwOnError: false,
-              displayMode: false,
-              strict: false,
-              trust: true,
-            });
-          } catch (e) {
-            console.error("KaTeX render error:", e);
+        document.body.appendChild(clone);
+
+        const mathElements = clone.querySelectorAll("[data-latex]");
+        mathElements.forEach((el) => {
+          const span = el as HTMLSpanElement;
+          const latex = span.dataset.latex;
+          if (window.katex && latex) {
+            try {
+              window.katex.render(latex, span, {
+                throwOnError: false,
+                displayMode: false,
+                strict: false,
+                trust: true,
+              });
+            } catch (e) {
+              console.error("KaTeX render error:", e);
+            }
           }
-        }
-      });
+        });
 
-      await new Promise((resolve) => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
-      const dataUrl = await toPng(clone, {
-        pixelRatio: 2,
-        backgroundColor: "#faf8f2",
-        width: PAPER_WIDTH,
-        height: PAPER_HEIGHT,
-        style: {
-          transform: "scale(1)",
-          transformOrigin: "top left"
-        }
-      });
+        const dataUrl = await toPng(clone, {
+          pixelRatio: 2,
+          backgroundColor: "#faf8f2",
+          width: PAPER_WIDTH,
+          height: PAPER_HEIGHT,
+          style: {
+            transform: "scale(1)",
+            transformOrigin: "top left"
+          }
+        });
 
-      document.body.removeChild(clone);
+        document.body.removeChild(clone);
 
-      const link = document.createElement("a");
-      link.href = dataUrl;
-      link.download = `Tugas-Folio-${Date.now()}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+        const link = document.createElement("a");
+        link.href = dataUrl;
+        link.download = `Tugas-Folio-Hal-${i + 1}-${Date.now()}.png`;
+        document.body.appendChild(link);
+        link.click();
+        
+        await new Promise(r => setTimeout(r, 400));
+      }
 
     } catch (error) {
       console.error("Download error:", error);
@@ -373,7 +415,12 @@ export default function App() {
     }
   };
 
-  const lineCount = Math.floor((PAPER_HEIGHT - marginTop - marginBottom) / lineHeight);
+  const PADDING = isFullscreen ? 32 : 48;
+  const displayScale = isFullscreen 
+    ? scaleProps 
+    : containerWidth > 0 && containerWidth < PAPER_WIDTH + PADDING 
+      ? (containerWidth - PADDING) / PAPER_WIDTH 
+      : 1;
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col font-sans text-gray-800">
@@ -657,10 +704,11 @@ export default function App() {
 
         {/* PREVIEW KERTAS FOLIO */}
         <div
+          ref={wrapperRef}
           className={
             isFullscreen
-              ? "fixed inset-0 z-50 bg-gray-900 overflow-y-auto flex flex-col items-center pt-24 pb-12"
-              : "lg:col-span-8 bg-gray-300/40 rounded-3xl p-8 overflow-auto flex justify-center shadow-inner"
+              ? "fixed inset-0 z-50 bg-gray-900 overflow-y-auto overflow-x-hidden flex flex-col items-center pt-24 pb-12"
+              : "lg:col-span-8 bg-gray-300/40 rounded-3xl p-4 sm:p-8 overflow-y-auto overflow-x-hidden flex flex-col items-center shadow-inner"
           }
         >
           {isFullscreen && (
@@ -675,7 +723,7 @@ export default function App() {
                 disabled={isGenerating}
                 className="bg-blue-600 hover:bg-blue-500 px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 transition-transform active:scale-95 disabled:opacity-50"
               >
-                <Download size={18} /> {isGenerating ? "Menyimpan..." : "Download (PNG)"}
+                <Download size={18} /> {isGenerating ? "Menyimpan..." : `Download (${totalPages} PNG)`}
               </button>
               <button
                 onClick={() => setIsFullscreen(false)}
@@ -688,156 +736,192 @@ export default function App() {
 
           <div
             style={{
-              transform: isFullscreen ? `scale(${scaleProps})` : "none",
-              transformOrigin: "center top",
-              transition: "transform 0.2s",
+              height: `${(PAPER_HEIGHT * totalPages + 32 * (totalPages - 1)) * displayScale}px`,
+              width: `${PAPER_WIDTH * displayScale}px`,
+              position: "relative",
+              transition: "width 0.2s, height 0.2s"
             }}
           >
             <div
-              ref={paperRef}
-              className="relative"
               style={{
+                transform: `scale(${displayScale})`,
+                transformOrigin: "top left",
+                display: "flex",
+                flexDirection: "column",
+                gap: "32px",
+                position: "absolute",
+                top: 0,
+                left: 0,
                 width: `${PAPER_WIDTH}px`,
-                height: `${PAPER_HEIGHT}px`,
-                backgroundColor: "#faf8f2",
-                boxShadow: isFullscreen
-                  ? "0 20px 60px rgba(0,0,0,0.5)"
-                  : "0 4px 30px rgba(0,0,0,0.15)",
-                overflow: "hidden",
+                transition: "transform 0.2s"
               }}
             >
-              {/* SVG GARIS KERTAS */}
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  height: "100%",
-                  zIndex: 0,
-                  pointerEvents: "none"
-                }}
-              >
-                {showMarginLine && (
-                  <>
-                    <line x1={paddingLeft - 20} y1="0" x2={paddingLeft - 20} y2={PAPER_HEIGHT} stroke="#b93b6e" strokeWidth="1.5" opacity="0.8" />
-                    <line x1={paddingLeft - 24} y1="0" x2={paddingLeft - 24} y2={PAPER_HEIGHT} stroke="#b93b6e" strokeWidth="0.8" opacity="0.6" />
-                  </>
-                )}
-                <line x1="0" y1={marginTop} x2={PAPER_WIDTH} y2={marginTop} stroke="#b93b6e" strokeWidth="1.5" opacity="0.8" />
-                <line x1="0" y1={marginTop - 4} x2={PAPER_WIDTH} y2={marginTop - 4} stroke="#b93b6e" strokeWidth="0.8" opacity="0.6" />
-                {Array.from({ length: 15 }).map((_, i) => (
-                  <line key={`tick-${i}`} x1={paddingLeft + 30 + i * 40} y1={marginTop - 6} x2={paddingLeft + 30 + i * 40} y2={marginTop} stroke="#b93b6e" strokeWidth="1" opacity="0.6" />
-                ))}
-                {Array.from({ length: lineCount }).map((_, i) => {
-                  const y = marginTop + (i + 1) * lineHeight;
-                  if (y > PAPER_HEIGHT - marginBottom) return null;
-                  return <line key={`line-${i}`} x1="0" y1={y} x2={PAPER_WIDTH} y2={y} stroke={lineColor} strokeWidth="1" opacity="0.5" />;
-                })}
-                <g transform={`translate(${PAPER_WIDTH - 220}, 30)`} stroke="#b93b6e" opacity="0.8">
-                  <rect x="0" y="0" width="180" height="50" fill="none" strokeWidth="1" />
-                  <line x1="0" y1="25" x2="120" y2="25" strokeWidth="1" />
-                  <line x1="120" y1="0" x2="120" y2="50" strokeWidth="1" />
-                  <text x="5" y="16" fontSize="10" fill="#b93b6e" stroke="none" fontFamily="sans-serif">Page No.</text>
-                  <line x1="55" y1="16" x2="115" y2="16" stroke="#b93b6e" strokeWidth="0.5" strokeDasharray="1 2" />
-                  <text x="5" y="41" fontSize="10" fill="#b93b6e" stroke="none" fontFamily="sans-serif">Date</text>
-                  <line x1="35" y1="41" x2="115" y2="41" stroke="#b93b6e" strokeWidth="0.5" strokeDasharray="1 2" />
-                  <g transform="translate(150, 25)">
-                    <text x="0" y="5" fontSize="30" fill="#b93b6e" stroke="none" fontFamily="serif" fontWeight="bold" textAnchor="middle" opacity="0.7">A</text>
-                    <text x="-8" y="5" fontSize="30" fill="#b93b6e" stroke="none" fontFamily="serif" fontWeight="bold" textAnchor="middle" opacity="0.5">A</text>
-                    <rect x="-20" y="-18" width="40" height="34" fill="none" strokeWidth="1" />
-                    <text x="0" y="22" fontSize="5" fill="#b93b6e" stroke="none" fontFamily="sans-serif" fontWeight="bold" textAnchor="middle" letterSpacing="0.2">SARASWATI</text>
-                  </g>
-                </g>
-              </svg>
-
-              <div style={{ position: "absolute", bottom: "20px", left: "40px", width: "35px", height: "35px", border: `1.5px solid ${lineColor}`, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "8px", fontWeight: "bold", color: lineColor, opacity: 0.3, zIndex: 5, transform: "rotate(-10deg)" }}>
-                SiDU
-              </div>
-
-              {/* AREA HEADER IDENTITAS */}
-              <div style={{ position: "relative", zIndex: 2, height: `${marginTop}px`, padding: `20px 40px 10px ${paddingLeft}px`, backgroundColor: "transparent" }}>
-                <div className="grid grid-cols-2 gap-x-8 gap-y-2">
-                  {identities.map((item) => (
-                    <div key={item.id} className="flex gap-2 items-baseline" style={{ fontFamily, fontSize: `${fontSize * 0.85}px`, color: inkColor }}>
-                      <span className="opacity-60 whitespace-nowrap font-semibold">{item.label}:</span>
-                      <span className="flex-1 px-1 border-b-2 border-dotted border-gray-400" style={{ minWidth: "80px", color: inkColor }}>{item.value || ""}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* AREA KONTEN UTAMA */}
-              <div
-                style={{
-                  position: "relative",
-                  zIndex: 1,
-                  paddingLeft: `${paddingLeft}px`,
-                  paddingRight: "40px",
-                  fontFamily: fontFamily,
-                  fontSize: `${fontSize}px`,
-                  lineHeight: `${lineHeight}px`,
-                  color: inkColor,
-                  backgroundColor: "transparent",
-                }}
-              >
+              {Array.from({ length: totalPages }).map((_, pageIndex) => (
                 <div
+                  key={`page-${pageIndex}`}
+                  id={`paper-page-${pageIndex}`}
+                  className="relative shrink-0"
                   style={{
-                    whiteSpace: "pre-wrap",
-                    wordWrap: "break-word",
-                    verticalAlign: "baseline",
-                    lineHeight: `${lineHeight}px`,
+                    width: `${PAPER_WIDTH}px`,
+                    height: `${PAPER_HEIGHT}px`,
+                    backgroundColor: "#faf8f2",
+                    boxShadow: isFullscreen
+                      ? "0 20px 60px rgba(0,0,0,0.5)"
+                      : "0 4px 30px rgba(0,0,0,0.15)",
+                    overflow: "hidden",
                   }}
                 >
-                  {text.split(/(\$\$.*?\$\$|\[shape:.*?\])/g).map((part, i) => {
-                    if (part.startsWith("$$") && part.endsWith("$$")) {
-                      return (
-                        <MathRenderer
-                          key={`math-${i}`}
-                          latex={part.slice(2, -2)}
-                          color={inkColor}
-                          fontSize={fontSize}
-                          fontFamily={fontFamily}
-                          lineHeight={lineHeight}
-                          roughness={handwritingRoughness}
-                        />
-                      );
-                    }
-                    if (part.startsWith("[shape:") && part.endsWith("]")) {
-                      return (
-                        <ShapeRenderer
-                          key={`shape-${i}`}
-                          type={part.slice(7, -1)}
-                          color={inkColor}
-                          size={lineHeight * 1.2}
-                          lineHeight={lineHeight}
-                          roughness={handwritingRoughness * 3}
-                        />
-                      );
-                    }
-                    return (
-                      <span
-                        key={`text-${i}`}
+                  {/* SVG GARIS KERTAS */}
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      height: "100%",
+                      zIndex: 0,
+                      pointerEvents: "none"
+                    }}
+                  >
+                    {showMarginLine && (
+                      <>
+                        <line x1={paddingLeft - 20} y1="0" x2={paddingLeft - 20} y2={PAPER_HEIGHT} stroke="#b93b6e" strokeWidth="1.5" opacity="0.8" />
+                        <line x1={paddingLeft - 24} y1="0" x2={paddingLeft - 24} y2={PAPER_HEIGHT} stroke="#b93b6e" strokeWidth="0.8" opacity="0.6" />
+                      </>
+                    )}
+                    <line x1="0" y1={marginTop} x2={PAPER_WIDTH} y2={marginTop} stroke="#b93b6e" strokeWidth="1.5" opacity="0.8" />
+                    <line x1="0" y1={marginTop - 4} x2={PAPER_WIDTH} y2={marginTop - 4} stroke="#b93b6e" strokeWidth="0.8" opacity="0.6" />
+                    {Array.from({ length: 15 }).map((_, i) => (
+                      <line key={`tick-${i}`} x1={paddingLeft + 30 + i * 40} y1={marginTop - 6} x2={paddingLeft + 30 + i * 40} y2={marginTop} stroke="#b93b6e" strokeWidth="1" opacity="0.6" />
+                    ))}
+                    {Array.from({ length: lineCount }).map((_, i) => {
+                      const y = marginTop + (i + 1) * lineHeight;
+                      if (y > PAPER_HEIGHT - marginBottom) return null;
+                      return <line key={`line-${i}`} x1="0" y1={y} x2={PAPER_WIDTH} y2={y} stroke={lineColor} strokeWidth="1" opacity="0.5" />;
+                    })}
+                    <g transform={`translate(${PAPER_WIDTH - 220}, 30)`} stroke="#b93b6e" opacity="0.8">
+                      <rect x="0" y="0" width="180" height="50" fill="none" strokeWidth="1" />
+                      <line x1="0" y1="25" x2="120" y2="25" strokeWidth="1" />
+                      <line x1="120" y1="0" x2="120" y2="50" strokeWidth="1" />
+                      <text x="5" y="16" fontSize="10" fill="#b93b6e" stroke="none" fontFamily="sans-serif">Page No.</text>
+                      <line x1="55" y1="16" x2="115" y2="16" stroke="#b93b6e" strokeWidth="0.5" strokeDasharray="1 2" />
+                      <text x="5" y="41" fontSize="10" fill="#b93b6e" stroke="none" fontFamily="sans-serif">Date</text>
+                      <line x1="35" y1="41" x2="115" y2="41" stroke="#b93b6e" strokeWidth="0.5" strokeDasharray="1 2" />
+                      <g transform="translate(150, 25)">
+                        <text x="0" y="5" fontSize="30" fill="#b93b6e" stroke="none" fontFamily="serif" fontWeight="bold" textAnchor="middle" opacity="0.7">A</text>
+                        <text x="-8" y="5" fontSize="30" fill="#b93b6e" stroke="none" fontFamily="serif" fontWeight="bold" textAnchor="middle" opacity="0.5">A</text>
+                        <rect x="-20" y="-18" width="40" height="34" fill="none" strokeWidth="1" />
+                        <text x="0" y="22" fontSize="5" fill="#b93b6e" stroke="none" fontFamily="sans-serif" fontWeight="bold" textAnchor="middle" letterSpacing="0.2">SARASWATI</text>
+                      </g>
+                    </g>
+                  </svg>
+
+                  <div style={{ position: "absolute", bottom: "20px", left: "40px", width: "35px", height: "35px", border: `1.5px solid ${lineColor}`, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "8px", fontWeight: "bold", color: lineColor, opacity: 0.3, zIndex: 5, transform: "rotate(-10deg)" }}>
+                    SiDU
+                  </div>
+
+                  {/* AREA HEADER IDENTITAS (Only on Page 1) */}
+                  {pageIndex === 0 && (
+                    <div style={{ position: "relative", zIndex: 2, height: `${marginTop}px`, padding: `20px 40px 10px ${paddingLeft}px`, backgroundColor: "transparent" }}>
+                      <div className="grid grid-cols-2 gap-x-8 gap-y-2">
+                        {identities.map((item) => (
+                          <div key={item.id} className="flex gap-2 items-baseline" style={{ fontFamily, fontSize: `${fontSize * 0.85}px`, color: inkColor }}>
+                            <span className="opacity-60 whitespace-nowrap font-semibold">{item.label}:</span>
+                            <span className="flex-1 px-1 border-b-2 border-dotted border-gray-400" style={{ minWidth: "80px", color: inkColor }}>{item.value || ""}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Spacer for Page 2+ to align text correctly */}
+                  {pageIndex > 0 && (
+                    <div style={{ position: "relative", zIndex: 2, height: `${marginTop}px` }} />
+                  )}
+
+                  {/* AREA KONTEN UTAMA DENGAN MASKING (CLIPPING) UNTUK MULTI-PAGE */}
+                  <div
+                    style={{
+                      position: "relative",
+                      zIndex: 1,
+                      height: `${lineCount * lineHeight}px`,
+                      overflow: "hidden"
+                    }}
+                  >
+                    <div
+                      ref={pageIndex === 0 ? contentRef : null}
+                      style={{
+                        position: "absolute",
+                        top: `-${pageIndex * (lineCount * lineHeight)}px`,
+                        left: 0,
+                        right: 0,
+                        paddingLeft: `${paddingLeft}px`,
+                        paddingRight: "40px",
+                        fontFamily: fontFamily,
+                        fontSize: `${fontSize}px`,
+                        lineHeight: `${lineHeight}px`,
+                        color: inkColor,
+                        backgroundColor: "transparent",
+                      }}
+                    >
+                      <div
                         style={{
-                          fontFamily: fontFamily,
-                          fontSize: `${fontSize}px`,
-                          lineHeight: `${lineHeight}px`,
-                          color: inkColor,
+                          whiteSpace: "pre-wrap",
+                          wordWrap: "break-word",
                           verticalAlign: "baseline",
-                          // EFEK TULISAN TANGAN: variasi rotasi kecil
-                          transform: `rotate(${(Math.random() - 0.5) * handwritingRoughness * 2}deg)`,
-                          display: "inline-block",
+                          lineHeight: `${lineHeight}px`,
                         }}
                       >
-                        {part}
-                      </span>
-                    );
-                  })}
-                </div>
-              </div>
+                        {text.split(/(\$\$.*?\$\$|\[shape:.*?\])/g).map((part, i) => {
+                          if (part.startsWith("$$") && part.endsWith("$$")) {
+                            return (
+                              <MathRenderer
+                                key={`math-${i}`}
+                                latex={part.slice(2, -2)}
+                                color={inkColor}
+                                fontSize={fontSize}
+                                fontFamily={fontFamily}
+                                lineHeight={lineHeight}
+                                roughness={handwritingRoughness}
+                              />
+                            );
+                          }
+                          if (part.startsWith("[shape:") && part.endsWith("]")) {
+                            return (
+                              <ShapeRenderer
+                                key={`shape-${i}`}
+                                type={part.slice(7, -1)}
+                                color={inkColor}
+                                size={lineHeight * 1.2}
+                                lineHeight={lineHeight}
+                                roughness={handwritingRoughness * 3}
+                              />
+                            );
+                          }
+                          return (
+                            <span
+                              key={`text-${i}`}
+                              style={{
+                                fontFamily: fontFamily,
+                                fontSize: `${fontSize}px`,
+                                lineHeight: `${lineHeight}px`,
+                                color: inkColor,
+                                verticalAlign: "baseline",
+                                transform: `rotate(${(Math.random() - 0.5) * handwritingRoughness * 2}deg)`,
+                                display: "inline-block",
+                              }}
+                            >
+                              {part}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
 
-              <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: `${marginBottom}px`, backgroundColor: "#faf8f2", zIndex: 2 }} />
+                  <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: `${marginBottom}px`, backgroundColor: "#faf8f2", zIndex: 2 }} />
+                </div>
+              ))}
             </div>
           </div>
         </div>
