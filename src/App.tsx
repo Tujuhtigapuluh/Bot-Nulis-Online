@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect } from "react";
-import html2canvas from "html2canvas";
 import {
   Type, Settings, Eraser, FileText,
   Plus, Trash2, Maximize, X, Download
@@ -307,11 +306,16 @@ export default function App() {
 
     try {
       await document.fonts.ready;
+      // Beri sedikit jeda agar semua font dimuat sepenuhnya
       await new Promise((resolve) => setTimeout(resolve, 800));
+
+      // Import library html-to-image secara dinamis
+      const { toPng } = await import("html-to-image");
 
       const originalElement = paperRef.current;
       const clone = originalElement.cloneNode(true) as HTMLDivElement;
 
+      // Sembunyikan dari layar
       clone.style.position = "fixed";
       clone.style.top = "-9999px";
       clone.style.left = "-9999px";
@@ -320,28 +324,7 @@ export default function App() {
 
       document.body.appendChild(clone);
 
-      const allElements = clone.querySelectorAll("*");
-      allElements.forEach((el) => {
-        const htmlEl = el as HTMLElement;
-        const computedStyle = window.getComputedStyle(htmlEl);
-        const colorProps = [
-          "color", "backgroundColor", "borderColor",
-          "borderTopColor", "borderRightColor",
-          "borderBottomColor", "borderLeftColor"
-        ];
-
-        colorProps.forEach((prop) => {
-          const value = computedStyle.getPropertyValue(prop);
-          if (value.includes("oklch")) {
-            if (prop.includes("background")) {
-              htmlEl.style.backgroundColor = "#faf8f2";
-            } else {
-              htmlEl.style.color = inkColor;
-            }
-          }
-        });
-      });
-
+      // Render ulang elemen matematika (jika ada) di dalam clone
       const mathElements = clone.querySelectorAll("[data-latex]");
       mathElements.forEach((el) => {
         const span = el as HTMLSpanElement;
@@ -362,21 +345,21 @@ export default function App() {
 
       await new Promise((resolve) => setTimeout(resolve, 500));
 
-      const canvas = await html2canvas(clone, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
+      const dataUrl = await toPng(clone, {
+        pixelRatio: 2,
         backgroundColor: "#faf8f2",
-        logging: false,
         width: PAPER_WIDTH,
         height: PAPER_HEIGHT,
+        style: {
+          transform: "scale(1)",
+          transformOrigin: "top left"
+        }
       });
 
       document.body.removeChild(clone);
 
-      const image = canvas.toDataURL("image/png", 1.0);
       const link = document.createElement("a");
-      link.href = image;
+      link.href = dataUrl;
       link.download = `Tugas-Folio-${Date.now()}.png`;
       document.body.appendChild(link);
       link.click();
